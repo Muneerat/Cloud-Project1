@@ -1,0 +1,227 @@
+Vagrant.configure("2") do |config|
+    config.vm.define "Master" do |subconfig|
+      subconfig.vm.hostname = "Master"
+      subconfig.vm.box = "ubuntu/focal64"
+      subconfig.vm.network "private_network", ip: "192.168.33.10"
+      subconfig.vm.provider "virtualbox" do |vb|
+     # Customize the amount of memory on the VM:
+          vb.memory = "512"
+          vb.cpus = "2"
+      end
+      subconfig.vm.provision "shell", inline: <<-SHELL
+
+      # Set the root password.
+      MYSQL_ROOT_PASSWORD="Mypass$"
+
+
+      echo "Provisioning master..."
+
+      # Update the package manager
+      sudo apt update
+
+      # Upgrade applications
+      sudo apt upgrade -y
+      echo "Update and upgrade done"
+
+      # Install Ifconfig
+      sudo apt install net-tools
+
+
+      # Define the username and password for the new user
+      new_username="altschool"
+      new_password="Mypass$"
+
+      # Create the user with a home directory and set the password
+      useradd -m -s /bin/bash "$new_username"
+
+      # Add the user to the sudo group 
+      usermod -aG sudo "$new_username"
+
+      # Enable SSH key-based authentication between the master and slave nodes
+      ssh-keygen -t rsa
+      
+      ssh-copy-id -i ~/.ssh/id_rsa.pub altschool@192.168.33.11
+      
+      # Enable SSH key-based authentication between the master and slave nodes
+      sudo -u altschool ssh-keygen -t rsa -N "" -f /home/altschool/.ssh/id_rsa
+
+      #Copy id_rsa from master node and copy it into slave node's .ssh folder
+        cat /vagrant/id_rsa.pub >> /home/altschool/.ssh/authorized_keys
+
+      # Restart the SSH service to apply the changes
+      sudo systemctl restart ssh
+
+
+      # Copy the contents of /mnt/altschool on the master node to /mnt/altschool/slave on the slave node
+      ssh altschool@192.168.33.11 "rsync -av /mnt/altschool /home/altschool/"
+
+
+      # Install Apache web server
+      sudo apt install -y apache2
+
+
+      # Install MySQL server and set root password
+      sudo apt install -y mysql-server
+
+
+      # Start the MySQL Server and grep temporary password
+      echo "Starting MySQL server for the first time"
+
+      sudo systemctl start mysql 2> /dev/null
+
+      tempRootPass="`sudo grep 'temporary.*root@localhost' /var/log/mysqld.log | tail -m 1 | sed 's/.*root@localhost: //'`"
+
+
+      # Set new password for root user
+      echo "Setting up new mysql server root password"
+      sudo mysql -u "root" --password="$tempRootPass" --connect-expired-password -e "alter user root@localhost identified by '${MYSQL_ROOT_PASSWORD}'; flush privileges;"
+
+
+      # Do the basic hardening
+      sudo mysql -u root --password="$MYSQL_ROOT_PASSWORD" -e "DELETE FROM mysql.user WHERE User=''; DROP DATABASE IF EXISTS test; DELETE FROM mysql.db WHERE Db='test OR Db='test\\_%'; FLUSH PRIVILEGES;"
+      sudo systemctl status mysql
+
+
+      # Confirm Installation Status
+      echo "MySQL installation and security configuration completed."
+
+
+      # Install PHP and required modules
+      sudo apt install -y php libapache2-mod-php php-mysql
+
+
+      # Enable Apache modules
+      a2enmod php7.4
+      sudo systemctl restart apache2
+
+
+      # Create a PHP test file to verify the installation
+      sudo echo "<?php phpinfo(); ?>" > /var/www/html/info.php
+
+
+      # Clone PHP application from GitHub (Laravel)
+      git clone https://github.com/laravel/laravel /var/www/html/laravel
+
+      # Restart Apache to apply changes
+      sudo systemctl restart apache2
+
+
+      # Display a message indicating the LAMP stack is installed
+      echo "LAMP stack (Apache, MySQL, PHP) has been successfully installed."
+      
+      SHELL
+
+    end  
+    config.vm.define "slave" do |subconfig|
+      subconfig.vm.hostname = "slave"
+      subconfig.vm.box = "ubuntu/focal64"
+      subconfig.vm.network "private_network", ip: "192.168.33.11"
+      subconfig.vm.provider "virtualbox" do |vb|
+     # Customize the amount of memory on the VM:
+          vb.memory = "512"
+          vb.cpus = "2"
+      end
+      subconfig.vm.provision "shell", inline: <<-SHELL
+        
+        # Set the root password
+        MYSQL_ROOT_PASSWORD="Mypass$"
+
+
+        echo "Provisioning slave..."
+
+
+        # Update the package manager
+        sudo apt update
+
+
+        # Upgrade applications
+        sudo apt upgrade -y
+        echo "Update and upgrade done"
+
+
+      # Install Ifconfig
+      sudo apt install net-tools
+
+
+
+
+
+      # Install Apache web server
+      sudo apt install -y apache2
+
+# Define the path to the sshd_config file
+sshd_config="/etc/ssh/sshd_config"
+
+
+# Define the new setting for PasswordAuthentication
+new_password_auth="yes"
+
+
+# Define the new setting for PubkeyAuthentication 
+new_pubkey_authentication="yes"
+
+
+# Use sed to modify the PasswordAuthentication setting in the sshd_config file
+sed -i "s/^PasswordAuthentication.*/PasswordAuthentication $new_password_auth/" "$sshd_config"
+
+
+# Use sed to modify the PubkeyAuthentication setting in the sshd_config file
+sed -i "s/^PubkeyAuthentication.*/PubkeyAuthentication $new_pubkey_authentication/" "$sshd_config"
+
+
+# Restart the SSH service to apply the changes
+sudo systemctl restart ssh
+
+
+# Install MySQL server and set root password
+sudo apt install -y mysql-server
+
+
+
+# Start the MySQL Server and grep temporary password
+echo "Starting MySQL server for the first time"
+
+sudo systemctl start mysql 2> /dev/null
+
+tempRootPass="`sudo grep 'temporary.*root@localhost' /var/log/mysqld.log | tail -m 1 | sed 's/.*root@localhost: //'`"
+
+
+# --------------------------------------------------------
+# Set new password for root user
+# --------------------------------------------------------
+echo "Setting up new mysql server root password"
+sudo mysql -u "root" --password="$tempRootPass" --connect-expired-password -e "alter user root@localhost identified by '${MYSQL_ROOT_PASSWORD}'; flush privileges;"
+
+sudo mysql -u root --password="$MYSQL_ROOT_PASSWORD" -e "DELETE FROM mysql.user WHERE User=''; DROP DATABASE IF EXISTS test; DELETE FROM mysql.db WHERE Db='test OR Db='test\\_%'; FLUSH PRIVILEGES;"
+sudo systemctl status mysql
+
+
+# Confirm Installation Status
+# --------------------------------------------------------
+echo "MySQL installation and security configuration completed."
+
+
+# Install PHP and required modules
+sudo apt install -y php libapache2-mod-php php-mysql
+
+
+# Enable Apache modules
+a2enmod php7.4
+sudo systemctl restart apache2
+
+
+# Create a PHP test file to verify the installation
+sudo echo "<?php phpinfo(); ?>" > /var/www/html/info.php
+
+
+# Restart Apache to apply changes
+sudo systemctl restart apache2
+
+# Display a message indicating the LAMP stack is installed
+echo "LAMP stack (Apache, MySQL, PHP) has been successfully installed."
+
+        
+      SHELL
+    end  
+
+ end
